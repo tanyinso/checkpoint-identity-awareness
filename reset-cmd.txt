@@ -1,0 +1,8 @@
+Dobre@@123@@
+
+
+PS C:\scripts> $Password= Read-Host "Enter new password" -AsSecureString
+Enter new password: ************
+PS C:\scripts> Get-ADUser -SearchBase "OU=dobre.local,DC=dobre,DC=local" -Filter * |
+>> ForEach-Object {
+>> Set-ADAccountPassword -Identity $_ -NewPassword $Password -Reset }
