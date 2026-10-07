@@ -48,16 +48,16 @@ Move-ADObject `
 $DC = "DC1.dobre.local"
 
 Set-ADOrganizationalUnit -Identity "OU=_ADMIN,DC=dobre,DC=local" `
-    -ProtectedFromAccidentalDeletion $false -Server $DC
+    -ProtectedFromAccidentalDeletion $true -Server $DC
 
 Set-ADOrganizationalUnit -Identity "OU=PRODUCTION,DC=dobre,DC=local" `
-    -ProtectedFromAccidentalDeletion $false -Server $DC
+    -ProtectedFromAccidentalDeletion $true -Server $DC
 
 Set-ADOrganizationalUnit -Identity "OU=BACKUP,DC=dobre,DC=local" `
-    -ProtectedFromAccidentalDeletion $false -Server $DC
+    -ProtectedFromAccidentalDeletion $true -Server $DC
 
 Set-ADOrganizationalUnit -Identity "OU=REMOTE-ADMIN,DC=dobre,DC=local" `
-    -ProtectedFromAccidentalDeletion $false -Server $DC
+    -ProtectedFromAccidentalDeletion $true -Server $DC
 
 Set-ADOrganizationalUnit -Identity "OU=SERVICE-ACCOUNTS,DC=dobre,DC=local" `
-    -ProtectedFromAccidentalDeletion $false -Server $DC
+    -ProtectedFromAccidentalDeletion $true -Server $DC
