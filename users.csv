@@ -1,0 +1,21 @@
+﻿SamAccountName,FirstName,LastName,Email,Department,Title,OU,Group
+jdoe,John,Doe,jdoe@dobre.local,IT,Infra Admin,"OU=IT,OU=Users,OU=PRODUCTION,DC=dobre,DC=local","GG-IT-Users,GG-Infra-Admin"
+asmith,Alice,Smith,asmith@dobre.local,IT,Ops Admin,"OU=IT,OU=Users,OU=PRODUCTION,DC=dobre,DC=local","GG-IT-Users,GG-Ops-Admin"
+rkofi,Robert,Kofi,rkofi@dobre.local,IT,Helpdesk,"OU=IT,OU=Users,OU=PRODUCTION,DC=dobre,DC=local","GG-IT-Users,GG-Helpdesk"
+mngugi,Mary,Ngugi,mngugi@dobre.local,Finance,Accountant,"OU=FIN,OU=Users,OU=PRODUCTION,DC=dobre,DC=local",GG-FIN-Users
+pade,Peter,Ade,pade@dobre.local,Finance,Finance Manager,"OU=FIN,OU=Users,OU=PRODUCTION,DC=dobre,DC=local","GG-FIN-Users,GG-FIN-Managers"
+lmensah,Linda,Mensah,lmensah@dobre.local,HR,HR Officer,"OU=HR,OU=Users,OU=PRODUCTION,DC=dobre,DC=local",GG-HR-Users
+gmbarga,Grace,Mbarga,gmbarga@dobre.local,HR,HR Manager,"OU=HR,OU=Users,OU=PRODUCTION,DC=dobre,DC=local","GG-HR-Users,GG-HR-Managers"
+remote1,Remote,Admin1,remote1@dobre.local,IT,Remote Admin,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local",GG-Remote-Admin
+endongo,Emmanuel,Ndongo,endongo@dobre.local,IT,Remote Infra Admin,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Infra-Admin"
+fabega,Francis,Abega,fabega@dobre.local,IT,Remote Infra Admin,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Infra-Admin"
+sbiloa,Serge,Biloa,sbiloa@dobre.local,IT,Remote Ops Admin,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Ops-Admin"
+ambella,Alain,Mballa,amballa@dobre.local,IT,Remote Ops Admin,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Ops-Admin"
+betoa,Bruno,Etoa,betoa@dobre.local,IT,Remote Helpdesk,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Helpdesk"
+cfon,Christian,Fon,cfon@dobre.local,IT,Remote Helpdesk,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-IT-Users,GG-Helpdesk"
+essomba,Caroline,Essomba,cessomba@dobre.local,Finance,Remote Accountant,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-FIN-Users"
+bewane,Beatrice,Ewane,bewane@dobre.local,Finance,Remote Finance Manager,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-FIN-Users,GG-FIN-Managers"
+cmvondo,Clarisse,Mvondo,cmvondo@dobre.local,Finance,Remote Accountant,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-FIN-Users"
+vetame,Valerie,Etame,vetame@dobre.local,HR,Remote HR Officer,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-HR-Users"
+nelomo,Nadine,Elomo,nelomo@dobre.local,HR,Remote HR Manager,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-HR-Users,GG-HR-Managers"
+amanga,Armand,Manga,amanga@dobre.local,HR,Remote HR Officer,"OU=Users,OU=REMOTE-ADMIN,DC=dobre,DC=local","GG-Remote-Users,GG-HR-Users"
