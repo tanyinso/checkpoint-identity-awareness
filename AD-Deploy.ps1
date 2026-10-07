@@ -1,485 +1,942 @@
-
 <#
-.SYNOPSIS
-    Deploys the Active Directory OU structure, security groups,
-    group nesting, service accounts, and users for dobre.local.
+================================================================================
+ DOBRE TECHNOLOGIES
+ ACTIVE DIRECTORY ENTERPRISE PROVISIONING ENGINE
+================================================================================
 
-.EXAMPLE
-    .\Deploy-AD-FINAL.ps1 -UserFile "C:\AD-Deploy\users.csv"
+ DOMAIN:
+     dobre.local
 
-.NOTES
-    Run on a domain controller or a machine with the AD PowerShell
-    module and appropriate delegated permissions.
-    Existing users and groups are not recreated.
+ DOMAIN CONTROLLER:
+     DC1.dobre.local
+
+ INPUT:
+     C:\AD-Deploy\users.csv
+
+ LOG:
+     C:\AD-Deploy\deploy.log
+
+ ARCHITECTURE:
+     DC=dobre,DC=local
+       |
+       +-- _ADMIN
+       |    +-- ServiceAccounts
+       |    +-- Tier0-Admins
+       |    +-- Tier1-Admins
+       |    +-- Tier2-Admins
+       |
+       +-- PRODUCTION
+       |    +-- Users
+       |    |    +-- FIN
+       |    |    +-- HR
+       |    |    +-- IT
+       |    +-- Computers
+       |    +-- Servers
+       |    +-- Groups
+       |
+       +-- BACKUP
+       |    +-- Computers
+       |    +-- Servers
+       |    +-- Groups
+       |
+       +-- REMOTE-ADMIN
+       |    +-- Users
+       |    +-- Groups
+       |
+       +-- SERVICE-ACCOUNTS
+
+================================================================================
 #>
 
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$UserFile,
-
-    [string]$LogPath = "C:\AD-Deploy\deploy.log",
-
-    [string]$DefaultUserPassword = "Welcome@2024!",
-
-    [string]$ServiceAccountPassword = "ChangeMe!2024#Strong"
-)
-
+Clear-Host
 $ErrorActionPreference = "Stop"
 
-# ============================================================
-# 1. INITIALIZATION
-# ============================================================
+# ============================================================================
+# 1. CONFIGURATION
+# ============================================================================
 
-Import-Module ActiveDirectory -ErrorAction Stop
+$DomainController = "DC1.dobre.local"
+$DomainDN         = "DC=dobre,DC=local"
+$DomainDNS        = "dobre.local"
 
-$LogDir = Split-Path $LogPath -Parent
+$UserFile         = "C:\AD-Deploy\users.csv"
+$LogPath          = "C:\AD-Deploy\deploy.log"
 
-if ($LogDir -and -not (Test-Path $LogDir)) {
-    New-Item -Path $LogDir -ItemType Directory -Force |
-        Out-Null
+$DefaultUserPassword = "Welcome@2024!"
+$ServiceAccountPassword = "ChangeMe!2024#Strong"
+
+# ============================================================================
+# 2. INITIALIZATION
+# ============================================================================
+
+if (-not (Test-Path "C:\AD-Deploy")) {
+    New-Item -Path "C:\AD-Deploy" -ItemType Directory -Force | Out-Null
 }
 
-function Write-Log {
-    param(
-        [string]$Message,
-        [string]$Level = "INFO"
-    )
+Start-Transcript -Path $LogPath -Append
 
-    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $Line = "[$Timestamp] [$Level] $Message"
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "       DOBRE TECHNOLOGIES AD PROVISIONING ENGINE" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host ""
 
-    $Color = switch ($Level) {
-        "ERROR" { "Red" }
-        "WARN"  { "Yellow" }
-        "OK"    { "Green" }
-        default { "White" }
-    }
+# ============================================================================
+# 3. LOAD ACTIVE DIRECTORY MODULE
+# ============================================================================
 
-    Write-Host $Line -ForegroundColor $Color
-    Add-Content -Path $LogPath -Value $Line
-}
-
-$Domain = Get-ADDomain
-$DomainDN = $Domain.DistinguishedName
-$DomainDNS = $Domain.DNSRoot
-
-$UserPassword = ConvertTo-SecureString `
-    $DefaultUserPassword -AsPlainText -Force
-
-$SvcPassword = ConvertTo-SecureString `
-    $ServiceAccountPassword -AsPlainText -Force
-
-$Stats = @{
-    OUsCreated       = 0
-    GroupsCreated    = 0
-    ServicesCreated  = 0
-    UsersCreated     = 0
-    UsersSkipped     = 0
-    Errors           = 0
-}
-
-Write-Log "============================================" "OK"
-Write-Log "Starting deployment for $DomainDNS" "OK"
-Write-Log "Domain DN: $DomainDN"
-
-# ============================================================
-# 2. CREATE ORGANIZATIONAL UNITS
-# ============================================================
-
-Write-Log "Creating OU structure..."
-
-# Parent OUs appear before their children.
-$OUDefinitions = @(
-    @{ Name = "_ADMIN"; Parent = $DomainDN },
-    @{ Name = "ServiceAccounts"; Parent = "OU=_ADMIN,$DomainDN" },
-    @{ Name = "Tier0-Admins"; Parent = "OU=_ADMIN,$DomainDN" },
-    @{ Name = "Tier1-Admins"; Parent = "OU=_ADMIN,$DomainDN" },
-    @{ Name = "Tier2-Admins"; Parent = "OU=_ADMIN,$DomainDN" },
-
-    @{ Name = "PRODUCTION"; Parent = $DomainDN },
-    @{ Name = "Users"; Parent = "OU=PRODUCTION,$DomainDN" },
-    @{ Name = "FIN"; Parent = "OU=Users,OU=PRODUCTION,$DomainDN" },
-    @{ Name = "HR"; Parent = "OU=Users,OU=PRODUCTION,$DomainDN" },
-    @{ Name = "IT"; Parent = "OU=Users,OU=PRODUCTION,$DomainDN" },
-    @{ Name = "Computers"; Parent = "OU=PRODUCTION,$DomainDN" },
-    @{ Name = "Servers"; Parent = "OU=PRODUCTION,$DomainDN" },
-    @{ Name = "Groups"; Parent = "OU=PRODUCTION,$DomainDN" },
-
-    @{ Name = "BACKUP"; Parent = $DomainDN },
-    @{ Name = "Computers"; Parent = "OU=BACKUP,$DomainDN" },
-    @{ Name = "Servers"; Parent = "OU=BACKUP,$DomainDN" },
-    @{ Name = "Groups"; Parent = "OU=BACKUP,$DomainDN" },
-
-    @{ Name = "REMOTE-ADMIN"; Parent = $DomainDN },
-    @{ Name = "Users"; Parent = "OU=REMOTE-ADMIN,$DomainDN" },
-    @{ Name = "Groups"; Parent = "OU=REMOTE-ADMIN,$DomainDN" },
-
-    @{ Name = "SERVICE-ACCOUNTS"; Parent = $DomainDN }
-)
-
-foreach ($OU in $OUDefinitions) {
-    $Identity = "OU=$($OU.Name),$($OU.Parent)"
-
-    try {
-        $ExistingOU = Get-ADOrganizationalUnit `
-            -Identity $Identity -ErrorAction SilentlyContinue
-
-        if (-not $ExistingOU) {
-            New-ADOrganizationalUnit `
-                -Name $OU.Name `
-                -Path $OU.Parent `
-                -ProtectedFromAccidentalDeletion $true `
-                -ErrorAction Stop
-
-            Write-Log "Created OU: $Identity" "OK"
-            $Stats.OUsCreated++
-        }
-        else {
-            Write-Log "OU already exists: $Identity" "WARN"
-        }
-    }
-    catch {
-        Write-Log "OU creation failed: $Identity - $_" "ERROR"
-        $Stats.Errors++
-    }
-}
-
-# ============================================================
-# 3. DEFINE SECURITY GROUPS
-# ============================================================
-
-Write-Log "Creating security groups..."
-
-$ProdGroupsOU   = "OU=Groups,OU=PRODUCTION,$DomainDN"
-$BackupGroupsOU = "OU=Groups,OU=BACKUP,$DomainDN"
-$AdminGroupsOU  = "OU=Tier1-Admins,OU=_ADMIN,$DomainDN"
-$RemoteGroupsOU = "OU=Groups,OU=REMOTE-ADMIN,$DomainDN"
-
-$Groups = @(
-    # Administrative groups
-    @{ N="GG-SVC-Admin"; P=$AdminGroupsOU; S="Global"; D="Service Account Administrators" },
-    @{ N="GG-Infra-Admin"; P=$AdminGroupsOU; S="Global"; D="Infrastructure Administrators Tier 1" },
-    @{ N="GG-Ops-Admin"; P=$AdminGroupsOU; S="Global"; D="Operations Administrators Tier 2" },
-    @{ N="GG-Helpdesk"; P=$AdminGroupsOU; S="Global"; D="Helpdesk Team" },
-    @{ N="GG-Remote-Admin"; P=$RemoteGroupsOU; S="Global"; D="Remote Administrators" },
-    @{ N="GG-Remote-Users"; P=$RemoteGroupsOU; S="Global"; D="Remote Access Users" },
-
-    # Production and backup server administration
-    @{ N="GG-Prod-Server-Admins"; P=$ProdGroupsOU; S="DomainLocal"; D="Production Server Administrators" },
-    @{ N="GG-Backup-Server-Admins"; P=$BackupGroupsOU; S="DomainLocal"; D="Backup Server Administrators" },
-    @{ N="GG-Backup-Operators"; P=$BackupGroupsOU; S="DomainLocal"; D="Backup and Restore Operators" },
-
-    # IT groups
-    @{ N="GG-IT-Users"; P=$ProdGroupsOU; S="Global"; D="IT Department Users" },
-    @{ N="GG-IT-Managers"; P=$ProdGroupsOU; S="Global"; D="IT Department Managers" },
-    @{ N="DL-IT-Share"; P=$ProdGroupsOU; S="DomainLocal"; D="IT File Share Access" },
-
-    # Finance groups
-    @{ N="GG-FIN-Users"; P=$ProdGroupsOU; S="Global"; D="Finance Department Users" },
-    @{ N="GG-FIN-Managers"; P=$ProdGroupsOU; S="Global"; D="Finance Department Managers" },
-    @{ N="DL-FIN-Share"; P=$ProdGroupsOU; S="DomainLocal"; D="Finance File Share Access" },
-
-    # Human Resources groups
-    @{ N="GG-HR-Users"; P=$ProdGroupsOU; S="Global"; D="HR Department Users" },
-    @{ N="GG-HR-Managers"; P=$ProdGroupsOU; S="Global"; D="HR Department Managers" },
-    @{ N="DL-HR-Share"; P=$ProdGroupsOU; S="DomainLocal"; D="HR File Share Access" }
-)
-
-foreach ($Group in $Groups) {
-    try {
-        $ExistingGroup = Get-ADGroup `
-            -Filter "SamAccountName -eq '$($Group.N)'" `
-            -ErrorAction SilentlyContinue
-
-        if (-not $ExistingGroup) {
-            New-ADGroup `
-                -Name $Group.N `
-                -SamAccountName $Group.N `
-                -GroupScope $Group.S `
-                -GroupCategory Security `
-                -Path $Group.P `
-                -Description $Group.D `
-                -ErrorAction Stop
-
-            Write-Log "Created group: $($Group.N)" "OK"
-            $Stats.GroupsCreated++
-        }
-        else {
-            Write-Log "Group already exists: $($Group.N)" "WARN"
-        }
-    }
-    catch {
-        Write-Log "Group creation failed: $($Group.N) - $_" "ERROR"
-        $Stats.Errors++
-    }
-}
-
-# ============================================================
-# 4. GROUP NESTING
-# ============================================================
-
-Write-Log "Configuring group nesting..."
-
-$Nesting = @(
-    @{ Parent="GG-Prod-Server-Admins"; Child="GG-Infra-Admin" },
-    @{ Parent="GG-Backup-Server-Admins"; Child="GG-Infra-Admin" },
-    @{ Parent="GG-Backup-Operators"; Child="GG-Ops-Admin" },
-    @{ Parent="GG-Helpdesk"; Child="GG-Ops-Admin" },
-
-    @{ Parent="DL-FIN-Share"; Child="GG-FIN-Users" },
-    @{ Parent="DL-FIN-Share"; Child="GG-FIN-Managers" },
-    @{ Parent="DL-HR-Share"; Child="GG-HR-Users" },
-    @{ Parent="DL-HR-Share"; Child="GG-HR-Managers" },
-    @{ Parent="DL-IT-Share"; Child="GG-IT-Users" },
-    @{ Parent="DL-IT-Share"; Child="GG-IT-Managers" }
-)
-
-foreach ($Item in $Nesting) {
-    try {
-        $ParentGroup = Get-ADGroup `
-            -Identity $Item.Parent -ErrorAction Stop
-
-        $ChildGroup = Get-ADGroup `
-            -Identity $Item.Child -ErrorAction Stop
-
-        $AlreadyMember = Get-ADGroupMember `
-            -Identity $ParentGroup `
-            -ErrorAction Stop |
-            Where-Object { $_.DistinguishedName -eq $ChildGroup.DistinguishedName }
-
-        if (-not $AlreadyMember) {
-            Add-ADGroupMember `
-                -Identity $ParentGroup `
-                -Members $ChildGroup `
-                -ErrorAction Stop
-
-            Write-Log "Nested $($Item.Child) into $($Item.Parent)" "OK"
-        }
-        else {
-            Write-Log "Nesting already exists: $($Item.Child) -> $($Item.Parent)" "WARN"
-        }
-    }
-    catch {
-        Write-Log "Nesting failed: $($Item.Child) -> $($Item.Parent) - $_" "ERROR"
-        $Stats.Errors++
-    }
-}
-
-# ============================================================
-# 5. CREATE SERVICE ACCOUNTS
-# ============================================================
-
-Write-Log "Creating service accounts..."
-
-$SvcOU = "OU=ServiceAccounts,OU=_ADMIN,$DomainDN"
-
-$ServiceAccounts = @(
-    @{ N="svc_admin"; D="Administrative service account" },
-    @{ N="svc_backup"; D="Backup service account" },
-    @{ N="svc_monitoring"; D="Monitoring service account" }
-)
-
-foreach ($Service in $ServiceAccounts) {
-    try {
-        $ExistingUser = Get-ADUser `
-            -Filter "SamAccountName -eq '$($Service.N)'" `
-            -ErrorAction SilentlyContinue
-
-        if (-not $ExistingUser) {
-            New-ADUser `
-                -Name $Service.N `
-                -SamAccountName $Service.N `
-                -UserPrincipalName "$($Service.N)@$DomainDNS" `
-                -Path $SvcOU `
-                -Description $Service.D `
-                -AccountPassword $SvcPassword `
-                -Enabled $true `
-                -ErrorAction Stop
-
-            Write-Log "Created service account: $($Service.N)" "OK"
-            $Stats.ServicesCreated++
-        }
-        else {
-            Write-Log "Service account exists: $($Service.N)" "WARN"
-        }
-    }
-    catch {
-        Write-Log "Service account failed: $($Service.N) - $_" "ERROR"
-        $Stats.Errors++
-    }
-}
-
-# ============================================================
-# 6. IMPORT USERS FROM CSV OR EXCEL
-# ============================================================
-
-Write-Log "Importing users from $UserFile..."
-
-if (-not (Test-Path $UserFile)) {
-    Write-Log "User file not found: $UserFile" "ERROR"
-    throw "Deployment stopped because the user file was not found."
-}
-
-$Extension = [IO.Path]::GetExtension($UserFile).ToLowerInvariant()
+Write-Host "[*] Loading Active Directory module..." -ForegroundColor Cyan
 
 try {
-    if ($Extension -eq ".csv") {
-        $Users = @(Import-Csv -Path $UserFile -ErrorAction Stop)
-    }
-    elseif ($Extension -in @(".xlsx", ".xls")) {
-        Import-Module ImportExcel -ErrorAction Stop
-        $Users = @(Import-Excel -Path $UserFile -ErrorAction Stop)
-    }
-    else {
-        throw "Unsupported file type: $Extension. Use CSV or Excel."
-    }
+    Import-Module ActiveDirectory -ErrorAction Stop
+    Write-Host "[+] ActiveDirectory module loaded." -ForegroundColor Green
 }
 catch {
-    Write-Log "User file import failed: $_" "ERROR"
-    throw
+    Write-Host "[X] Failed to load ActiveDirectory module." -ForegroundColor Red
+    Stop-Transcript
+    exit 1
 }
 
-$RequiredColumns = @(
-    "SamAccountName", "FirstName", "LastName",
-    "Email", "Department", "Title", "OU", "Group"
+# ============================================================================
+# 4. VERIFY DOMAIN CONTROLLER
+# ============================================================================
+
+Write-Host ""
+Write-Host "[*] Verifying domain controller..." -ForegroundColor Cyan
+
+try {
+    $DC = Get-ADDomainController `
+        -Identity $DomainController `
+        -ErrorAction Stop
+
+    Write-Host "[+] Domain Controller: $($DC.HostName)" -ForegroundColor Green
+    Write-Host "[+] IPv4 Address:      $($DC.IPv4Address)" -ForegroundColor Green
+    Write-Host "[+] Global Catalog:    $($DC.IsGlobalCatalog)" -ForegroundColor Green
+    Write-Host "[+] Read Only:         $($DC.IsReadOnly)" -ForegroundColor Green
+}
+catch {
+    Write-Host "[X] Cannot contact $DomainController" -ForegroundColor Red
+    Write-Host $_.Exception.Message
+    Stop-Transcript
+    exit 1
+}
+
+# ============================================================================
+# 5. VERIFY DOMAIN
+# ============================================================================
+
+Write-Host ""
+Write-Host "[*] Verifying domain..." -ForegroundColor Cyan
+
+try {
+    $Domain = Get-ADDomain `
+        -Server $DomainController `
+        -ErrorAction Stop
+
+    if ($Domain.DistinguishedName -ne $DomainDN) {
+        Write-Host "[X] Domain DN mismatch." -ForegroundColor Red
+        Write-Host "Expected: $DomainDN"
+        Write-Host "Found:    $($Domain.DistinguishedName)"
+        Stop-Transcript
+        exit 1
+    }
+
+    Write-Host "[+] DNS Root: $($Domain.DNSRoot)" -ForegroundColor Green
+    Write-Host "[+] Domain DN: $($Domain.DistinguishedName)" -ForegroundColor Green
+}
+catch {
+    Write-Host "[X] Unable to verify domain." -ForegroundColor Red
+    Write-Host $_.Exception.Message
+    Stop-Transcript
+    exit 1
+}
+
+# ============================================================================
+# 6. STATISTICS
+# ============================================================================
+
+$Stats = [ordered]@{
+    OUsCreated          = 0
+    OUsExisting         = 0
+    GroupsCreated       = 0
+    GroupsExisting      = 0
+    ServiceAccounts     = 0
+    UsersCreated        = 0
+    UsersExisting       = 0
+    UsersFailed         = 0
+    GroupAssignments    = 0
+    GroupAssignmentFail = 0
+}
+
+# ============================================================================
+# 7. FUNCTION - ENSURE OU
+# ============================================================================
+
+function Ensure-OU {
+
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ParentDN
+    )
+
+    $TargetDN = "OU=$Name,$ParentDN"
+
+    try {
+
+        $Existing = Get-ADOrganizationalUnit `
+            -Identity $TargetDN `
+            -Server $DomainController `
+            -ErrorAction SilentlyContinue
+
+        if ($Existing) {
+
+            Write-Host "[=] OU already exists: $TargetDN" `
+                -ForegroundColor DarkGray
+
+            $Stats.OUsExisting++
+
+            return $TargetDN
+        }
+
+        New-ADOrganizationalUnit `
+            -Name $Name `
+            -Path $ParentDN `
+            -Server $DomainController `
+            -ProtectedFromAccidentalDeletion $true `
+            -ErrorAction Stop
+
+        Write-Host "[+] OU created: $TargetDN" `
+            -ForegroundColor Green
+
+        $Stats.OUsCreated++
+
+        return $TargetDN
+    }
+    catch {
+
+        Write-Host ""
+        Write-Host "[X] FAILED TO CREATE OU" -ForegroundColor Red
+        Write-Host "    Name:   $Name"
+        Write-Host "    Parent: $ParentDN"
+        Write-Host "    Target: $TargetDN"
+        Write-Host "    Error:  $($_.Exception.Message)"
+        Write-Host ""
+
+        throw
+    }
+}
+
+# ============================================================================
+# 8. CREATE ENTERPRISE OU STRUCTURE
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " CREATING ENTERPRISE OU STRUCTURE"
+Write-Host "============================================================"
+Write-Host ""
+
+try {
+
+    # ------------------------------------------------------------------------
+    # _ADMIN
+    # ------------------------------------------------------------------------
+
+    $AdminOU = Ensure-OU `
+        -Name "_ADMIN" `
+        -ParentDN $DomainDN
+
+    $AdminServiceOU = Ensure-OU `
+        -Name "ServiceAccounts" `
+        -ParentDN $AdminOU
+
+    $Tier0OU = Ensure-OU `
+        -Name "Tier0-Admins" `
+        -ParentDN $AdminOU
+
+    $Tier1OU = Ensure-OU `
+        -Name "Tier1-Admins" `
+        -ParentDN $AdminOU
+
+    $Tier2OU = Ensure-OU `
+        -Name "Tier2-Admins" `
+        -ParentDN $AdminOU
+
+
+    # ------------------------------------------------------------------------
+    # PRODUCTION
+    # ------------------------------------------------------------------------
+
+    $ProductionOU = Ensure-OU `
+        -Name "PRODUCTION" `
+        -ParentDN $DomainDN
+
+    $ProductionUsersOU = Ensure-OU `
+        -Name "Users" `
+        -ParentDN $ProductionOU
+
+    $FINOU = Ensure-OU `
+        -Name "FIN" `
+        -ParentDN $ProductionUsersOU
+
+    $HROU = Ensure-OU `
+        -Name "HR" `
+        -ParentDN $ProductionUsersOU
+
+    $ITOU = Ensure-OU `
+        -Name "IT" `
+        -ParentDN $ProductionUsersOU
+
+    $ProductionComputersOU = Ensure-OU `
+        -Name "Computers" `
+        -ParentDN $ProductionOU
+
+    $ProductionServersOU = Ensure-OU `
+        -Name "Servers" `
+        -ParentDN $ProductionOU
+
+    $ProductionGroupsOU = Ensure-OU `
+        -Name "Groups" `
+        -ParentDN $ProductionOU
+
+
+    # ------------------------------------------------------------------------
+    # BACKUP
+    # ------------------------------------------------------------------------
+
+    $BackupOU = Ensure-OU `
+        -Name "BACKUP" `
+        -ParentDN $DomainDN
+
+    $BackupComputersOU = Ensure-OU `
+        -Name "Computers" `
+        -ParentDN $BackupOU
+
+    $BackupServersOU = Ensure-OU `
+        -Name "Servers" `
+        -ParentDN $BackupOU
+
+    $BackupGroupsOU = Ensure-OU `
+        -Name "Groups" `
+        -ParentDN $BackupOU
+
+
+    # ------------------------------------------------------------------------
+    # REMOTE ADMIN
+    # ------------------------------------------------------------------------
+
+    $RemoteAdminOU = Ensure-OU `
+        -Name "REMOTE-ADMIN" `
+        -ParentDN $DomainDN
+
+    $RemoteUsersOU = Ensure-OU `
+        -Name "Users" `
+        -ParentDN $RemoteAdminOU
+
+    $RemoteGroupsOU = Ensure-OU `
+        -Name "Groups" `
+        -ParentDN $RemoteAdminOU
+
+
+    # ------------------------------------------------------------------------
+    # SERVICE ACCOUNTS
+    # ------------------------------------------------------------------------
+
+    $ServiceAccountsOU = Ensure-OU `
+        -Name "SERVICE-ACCOUNTS" `
+        -ParentDN $DomainDN
+
+}
+catch {
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host " OU CREATION FAILED"
+    Write-Host "============================================================" `
+        -ForegroundColor Red
+
+    Write-Host ""
+    Write-Host "Deployment stopped intentionally." -ForegroundColor Red
+    Write-Host "No users or groups will be created."
+    Write-Host ""
+
+    Stop-Transcript
+    exit 1
+}
+
+# ============================================================================
+# 9. VERIFY ALL REQUIRED OUs
+# ============================================================================
+
+Write-Host ""
+Write-Host "[*] Verifying complete OU structure..." -ForegroundColor Cyan
+
+$RequiredOUs = @(
+    $AdminOU,
+    $AdminServiceOU,
+    $Tier0OU,
+    $Tier1OU,
+    $Tier2OU,
+
+    $ProductionOU,
+    $ProductionUsersOU,
+    $FINOU,
+    $HROU,
+    $ITOU,
+    $ProductionComputersOU,
+    $ProductionServersOU,
+    $ProductionGroupsOU,
+
+    $BackupOU,
+    $BackupComputersOU,
+    $BackupServersOU,
+    $BackupGroupsOU,
+
+    $RemoteAdminOU,
+    $RemoteUsersOU,
+    $RemoteGroupsOU,
+
+    $ServiceAccountsOU
 )
 
-if ($Users.Count -gt 0) {
-    $ActualColumns = @($Users[0].PSObject.Properties.Name)
+foreach ($OU in $RequiredOUs) {
 
-    foreach ($Column in $RequiredColumns) {
-        if ($Column -notin $ActualColumns) {
-            throw "Required column missing from user file: $Column"
+    try {
+        Get-ADOrganizationalUnit `
+            -Identity $OU `
+            -Server $DomainController `
+            -ErrorAction Stop | Out-Null
+
+        Write-Host "[OK] $OU" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "[X] Missing OU: $OU" -ForegroundColor Red
+        Stop-Transcript
+        exit 1
+    }
+}
+
+Write-Host ""
+Write-Host "[+] OU structure verified successfully." -ForegroundColor Green
+
+# ============================================================================
+# 10. CREATE SECURITY GROUP FUNCTION
+# ============================================================================
+
+function Ensure-SecurityGroup {
+
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GroupName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GroupOU
+    )
+
+    try {
+
+        $Existing = Get-ADGroup `
+            -Identity $GroupName `
+            -Server $DomainController `
+            -ErrorAction SilentlyContinue
+
+        if ($Existing) {
+
+            Write-Host "[=] Group already exists: $GroupName" `
+                -ForegroundColor DarkGray
+
+            $Stats.GroupsExisting++
+
+            return
+        }
+
+        New-ADGroup `
+            -Name $GroupName `
+            -SamAccountName $GroupName `
+            -GroupScope Global `
+            -GroupCategory Security `
+            -Path $GroupOU `
+            -Server $DomainController `
+            -ErrorAction Stop
+
+        Write-Host "[+] Group created: $GroupName" `
+            -ForegroundColor Green
+
+        $Stats.GroupsCreated++
+    }
+    catch {
+
+        Write-Host "[X] Failed to create group: $GroupName" `
+            -ForegroundColor Red
+
+        Write-Host "    $($_.Exception.Message)"
+    }
+}
+
+# ============================================================================
+# 11. CREATE SECURITY GROUPS
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " CREATING SECURITY GROUPS"
+Write-Host "============================================================"
+Write-Host ""
+
+$Groups = @{
+
+    "GG-SVC-Admin"           = $ProductionGroupsOU
+    "GG-Infra-Admin"         = $ProductionGroupsOU
+    "GG-Ops-Admin"           = $ProductionGroupsOU
+    "GG-Remote-Admin"        = $RemoteGroupsOU
+    "GG-Remote-Users"        = $RemoteGroupsOU
+    "GG-Helpdesk"            = $ProductionGroupsOU
+
+    "GG-Prod-Server-Admins"  = $ProductionGroupsOU
+    "GG-Backup-Server-Admins"= $BackupGroupsOU
+    "GG-Backup-Operators"    = $BackupGroupsOU
+
+    "GG-IT-Users"            = $ProductionGroupsOU
+    "GG-IT-Managers"         = $ProductionGroupsOU
+    "DL-IT-Share"            = $ProductionGroupsOU
+
+    "GG-FIN-Users"           = $ProductionGroupsOU
+    "GG-FIN-Managers"        = $ProductionGroupsOU
+    "DL-FIN-Share"           = $ProductionGroupsOU
+
+    "GG-HR-Users"            = $ProductionGroupsOU
+    "GG-HR-Managers"         = $ProductionGroupsOU
+    "DL-HR-Share"            = $ProductionGroupsOU
+}
+
+foreach ($GroupName in $Groups.Keys) {
+
+    Ensure-SecurityGroup `
+        -GroupName $GroupName `
+        -GroupOU $Groups[$GroupName]
+}
+
+# ============================================================================
+# 12. GROUP NESTING
+# ============================================================================
+
+function Add-GroupToGroup {
+
+    param(
+        [string]$ParentGroup,
+        [string]$ChildGroup
+    )
+
+    try {
+
+        Add-ADGroupMember `
+            -Identity $ParentGroup `
+            -Members $ChildGroup `
+            -Server $DomainController `
+            -ErrorAction Stop
+
+        Write-Host "[+] $ChildGroup -> $ParentGroup" `
+            -ForegroundColor Green
+    }
+    catch {
+
+        if ($_.Exception.Message -match "already a member") {
+
+            Write-Host "[=] $ChildGroup already belongs to $ParentGroup" `
+                -ForegroundColor DarkGray
+        }
+        else {
+
+            Write-Host "[X] Failed nesting $ChildGroup -> $ParentGroup" `
+                -ForegroundColor Red
+
+            Write-Host "    $($_.Exception.Message)"
         }
     }
 }
 
-foreach ($User in $Users) {
-    $Sam = ([string]$User.SamAccountName).Trim()
-    $TargetOU = ([string]$User.OU).Trim()
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " CONFIGURING GROUP NESTING"
+Write-Host "============================================================"
+Write-Host ""
 
-    if ([string]::IsNullOrWhiteSpace($Sam) -or
-        [string]::IsNullOrWhiteSpace($TargetOU)) {
-        Write-Log "Skipping row with missing SamAccountName or OU." "ERROR"
-        $Stats.Errors++
-        continue
-    }
+Add-GroupToGroup "GG-Infra-Admin" "GG-Prod-Server-Admins"
+Add-GroupToGroup "GG-Infra-Admin" "GG-Backup-Server-Admins"
 
-    # Only allow user destinations within this domain.
-    if (-not $TargetOU.EndsWith(
-        ",$DomainDN",
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        Write-Log "Rejected OU outside the domain: $TargetOU for $Sam" "ERROR"
-        $Stats.Errors++
-        continue
-    }
+Add-GroupToGroup "GG-Ops-Admin" "GG-Backup-Operators"
+Add-GroupToGroup "GG-Ops-Admin" "GG-Helpdesk"
+
+Add-GroupToGroup "DL-IT-Share" "GG-IT-Users"
+Add-GroupToGroup "DL-FIN-Share" "GG-FIN-Users"
+Add-GroupToGroup "DL-HR-Share" "GG-HR-Users"
+
+# ============================================================================
+# 13. SERVICE ACCOUNTS
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " CREATING SERVICE ACCOUNTS"
+Write-Host "============================================================"
+Write-Host ""
+
+$ServicePassword = ConvertTo-SecureString `
+    $ServiceAccountPassword `
+    -AsPlainText `
+    -Force
+
+$ServiceAccounts = @(
+    "svc_admin",
+    "svc_backup",
+    "svc_monitoring"
+)
+
+foreach ($Account in $ServiceAccounts) {
 
     try {
-        # Validate the destination OU before creating the user.
-        Get-ADOrganizationalUnit `
-            -Identity $TargetOU -ErrorAction Stop |
-            Out-Null
 
-        $ExistingUser = Get-ADUser `
-            -Filter "SamAccountName -eq '$Sam'" `
+        $Existing = Get-ADUser `
+            -Identity $Account `
+            -Server $DomainController `
             -ErrorAction SilentlyContinue
 
-        if (-not $ExistingUser) {
+        if ($Existing) {
+
+            Write-Host "[=] Service account already exists: $Account" `
+                -ForegroundColor DarkGray
+
+            continue
+        }
+
+        New-ADUser `
+            -Name $Account `
+            -SamAccountName $Account `
+            -UserPrincipalName "$Account@$DomainDNS" `
+            -Path $AdminServiceOU `
+            -AccountPassword $ServicePassword `
+            -Enabled $true `
+            -PasswordNeverExpires $true `
+            -CannotChangePassword $true `
+            -Server $DomainController `
+            -ErrorAction Stop
+
+        Write-Host "[+] Service account created: $Account" `
+            -ForegroundColor Green
+
+        $Stats.ServiceAccounts++
+    }
+    catch {
+
+        Write-Host "[X] Failed service account: $Account" `
+            -ForegroundColor Red
+
+        Write-Host "    $($_.Exception.Message)"
+    }
+}
+
+# ============================================================================
+# 14. LOAD USERS CSV
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " LOADING USERS CSV"
+Write-Host "============================================================"
+Write-Host ""
+
+if (-not (Test-Path $UserFile)) {
+
+    Write-Host "[X] CSV file not found:" -ForegroundColor Red
+    Write-Host "    $UserFile"
+
+    Stop-Transcript
+    exit 1
+}
+
+try {
+
+    $Users = Import-Csv -Path $UserFile -ErrorAction Stop
+
+    Write-Host "[+] CSV loaded successfully." -ForegroundColor Green
+    Write-Host "[+] Users found: $($Users.Count)" -ForegroundColor Green
+}
+catch {
+
+    Write-Host "[X] Failed to import CSV." -ForegroundColor Red
+    Write-Host $_.Exception.Message
+
+    Stop-Transcript
+    exit 1
+}
+
+# ============================================================================
+# 15. VERIFY CSV COLUMNS
+# ============================================================================
+
+$RequiredColumns = @(
+    "SamAccountName",
+    "FirstName",
+    "LastName",
+    "Email",
+    "Department",
+    "Title",
+    "OU",
+    "Group"
+)
+
+$CSVColumns = $Users[0].PSObject.Properties.Name
+
+foreach ($Column in $RequiredColumns) {
+
+    if ($CSVColumns -notcontains $Column) {
+
+        Write-Host ""
+        Write-Host "[X] Missing CSV column: $Column" `
+            -ForegroundColor Red
+
+        Stop-Transcript
+        exit 1
+    }
+}
+
+Write-Host "[+] CSV structure validated." -ForegroundColor Green
+
+# ============================================================================
+# 16. CREATE USERS
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " CREATING USER ACCOUNTS"
+Write-Host "============================================================"
+Write-Host ""
+
+$UserPassword = ConvertTo-SecureString `
+    $DefaultUserPassword `
+    -AsPlainText `
+    -Force
+
+foreach ($User in $Users) {
+
+    $Sam = "$($User.SamAccountName)".Trim()
+
+    if ([string]::IsNullOrWhiteSpace($Sam)) {
+        continue
+    }
+
+    Write-Host ""
+    Write-Host "------------------------------------------------------------"
+    Write-Host "Processing: $Sam"
+    Write-Host "Name:       $($User.FirstName) $($User.LastName)"
+    Write-Host "Department: $($User.Department)"
+    Write-Host "------------------------------------------------------------"
+
+    try {
+
+        # --------------------------------------------------------------------
+        # Check existing user
+        # --------------------------------------------------------------------
+
+        $ExistingUser = Get-ADUser `
+            -Identity $Sam `
+            -Server $DomainController `
+            -ErrorAction SilentlyContinue
+
+        if ($ExistingUser) {
+
+            Write-Host "[=] User already exists: $Sam" `
+                -ForegroundColor Yellow
+
+            $Stats.UsersExisting++
+        }
+        else {
+
+            # ---------------------------------------------------------------
+            # Verify target OU
+            # ---------------------------------------------------------------
+
+            $TargetOU = "$($User.OU)".Trim()
+
+            if ([string]::IsNullOrWhiteSpace($TargetOU)) {
+
+                throw "CSV OU field is empty."
+            }
+
+            $OUObject = Get-ADOrganizationalUnit `
+                -Identity $TargetOU `
+                -Server $DomainController `
+                -ErrorAction SilentlyContinue
+
+            if (-not $OUObject) {
+
+                throw "Target OU does not exist: $TargetOU"
+            }
+
+            # ---------------------------------------------------------------
+            # Create user
+            # ---------------------------------------------------------------
+
             $NewUserParams = @{
                 Name                  = "$($User.FirstName) $($User.LastName)"
-                GivenName             = [string]$User.FirstName
-                Surname               = [string]$User.LastName
+                GivenName             = $User.FirstName
+                Surname               = $User.LastName
+                DisplayName           = "$($User.FirstName) $($User.LastName)"
                 SamAccountName        = $Sam
                 UserPrincipalName     = "$Sam@$DomainDNS"
+                EmailAddress          = $User.Email
+                Department            = $User.Department
+                Title                 = $User.Title
                 Path                  = $TargetOU
                 AccountPassword       = $UserPassword
                 ChangePasswordAtLogon = $true
                 Enabled               = $true
-                ErrorAction           = "Stop"
+                Server                = $DomainController
             }
 
-            if (-not [string]::IsNullOrWhiteSpace([string]$User.Email)) {
-                $NewUserParams.EmailAddress = [string]$User.Email
-            }
+            New-ADUser @NewUserParams -ErrorAction Stop
 
-            if (-not [string]::IsNullOrWhiteSpace([string]$User.Department)) {
-                $NewUserParams.Department = [string]$User.Department
-            }
+            Write-Host "[+] User created: $Sam" `
+                -ForegroundColor Green
 
-            if (-not [string]::IsNullOrWhiteSpace([string]$User.Title)) {
-                $NewUserParams.Title = [string]$User.Title
-            }
-
-            New-ADUser @NewUserParams
-
-            Write-Log "Created user: $Sam in $TargetOU" "OK"
             $Stats.UsersCreated++
         }
-        else {
-            Write-Log "User already exists; not recreated: $Sam" "WARN"
-            $Stats.UsersSkipped++
-        }
 
-        # Add the user to each requested group.
-        $RequestedGroups = @(
-            ([string]$User.Group -split ',') |
+        # --------------------------------------------------------------------
+        # Group membership
+        # --------------------------------------------------------------------
+
+        if (-not [string]::IsNullOrWhiteSpace($User.Group)) {
+
+            $GroupList = $User.Group -split ',' |
                 ForEach-Object { $_.Trim() } |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        )
+                Where-Object { $_ }
 
-        foreach ($GroupName in $RequestedGroups) {
-            try {
-                $GroupObject = Get-ADGroup `
-                    -Identity $GroupName -ErrorAction Stop
+            foreach ($GroupName in $GroupList) {
 
-                $UserObject = Get-ADUser `
-                    -Identity $Sam -ErrorAction Stop
+                try {
 
-                $Membership = Get-ADGroupMember `
-                    -Identity $GroupObject `
-                    -ErrorAction Stop |
-                    Where-Object {
-                        $_.DistinguishedName -eq $UserObject.DistinguishedName
-                    }
-
-                if (-not $Membership) {
                     Add-ADGroupMember `
-                        -Identity $GroupObject `
-                        -Members $UserObject `
+                        -Identity $GroupName `
+                        -Members $Sam `
+                        -Server $DomainController `
                         -ErrorAction Stop
 
-                    Write-Log "Added $Sam to $GroupName" "OK"
+                    Write-Host "[+] Added $Sam to $GroupName" `
+                        -ForegroundColor Green
+
+                    $Stats.GroupAssignments++
                 }
-                else {
-                    Write-Log "$Sam is already a member of $GroupName" "WARN"
+                catch {
+
+                    if ($_.Exception.Message -match "already a member") {
+
+                        Write-Host "[=] $Sam already belongs to $GroupName" `
+                            -ForegroundColor DarkGray
+                    }
+                    else {
+
+                        Write-Host "[!] Failed group assignment: $GroupName" `
+                            -ForegroundColor Yellow
+
+                        Write-Host "    $($_.Exception.Message)"
+
+                        $Stats.GroupAssignmentFail++
+                    }
                 }
-            }
-            catch {
-                Write-Log "Membership failed: $Sam -> $GroupName - $_" "ERROR"
-                $Stats.Errors++
             }
         }
     }
     catch {
-        Write-Log "User processing failed: $Sam - $_" "ERROR"
-        $Stats.Errors++
+
+        Write-Host ""
+        Write-Host "[X] USER PROVISIONING FAILED: $Sam" `
+            -ForegroundColor Red
+
+        Write-Host "    $($_.Exception.Message)"
+
+        $Stats.UsersFailed++
     }
 }
 
-# ============================================================
-# 7. DEPLOYMENT SUMMARY
-# ============================================================
+# ============================================================================
+# 17. FINAL VERIFICATION
+# ============================================================================
 
-Write-Log "============================================" "OK"
-Write-Log "DEPLOYMENT FINISHED" "OK"
-Write-Log "Domain: $DomainDNS" "OK"
-Write-Log "OUs created: $($Stats.OUsCreated)" "OK"
-Write-Log "Groups created: $($Stats.GroupsCreated)" "OK"
-Write-Log "Service accounts created: $($Stats.ServicesCreated)" "OK"
-Write-Log "Users created: $($Stats.UsersCreated)" "OK"
-Write-Log "Existing users skipped: $($Stats.UsersSkipped)" "OK"
-Write-Log "Errors encountered: $($Stats.Errors)" $(if ($Stats.Errors -gt 0) { "WARN" } else { "OK" })
-Write-Log "Log file: $LogPath" "OK"
-Write-Log "============================================" "OK"
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " FINAL AD VERIFICATION"
+Write-Host "============================================================"
+Write-Host ""
+
+Write-Host "[*] OUs:" -ForegroundColor Cyan
+
+Get-ADOrganizationalUnit `
+    -Filter * `
+    -SearchBase $DomainDN `
+    -SearchScope Subtree `
+    -Server $DomainController |
+    Select-Object Name,DistinguishedName |
+    Sort-Object DistinguishedName |
+    Format-Table -AutoSize
+
+Write-Host ""
+Write-Host "[*] Users created by this deployment:" -ForegroundColor Cyan
+
+Get-ADUser `
+    -Filter * `
+    -SearchBase $ProductionUsersOU `
+    -SearchScope Subtree `
+    -Server $DomainController |
+    Select-Object Name,SamAccountName,Enabled,DistinguishedName |
+    Sort-Object DistinguishedName |
+    Format-Table -AutoSize
+
+# ============================================================================
+# 18. SUMMARY
+# ============================================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " DOBRE AD PROVISIONING SUMMARY"
+Write-Host "============================================================"
+Write-Host ""
+
+Write-Host "OUs Created:          $($Stats.OUsCreated)"
+Write-Host "OUs Already Existing: $($Stats.OUsExisting)"
+Write-Host "Groups Created:       $($Stats.GroupsCreated)"
+Write-Host "Groups Existing:      $($Stats.GroupsExisting)"
+Write-Host "Service Accounts:     $($Stats.ServiceAccounts)"
+Write-Host "Users Created:        $($Stats.UsersCreated)"
+Write-Host "Users Existing:       $($Stats.UsersExisting)"
+Write-Host "Users Failed:         $($Stats.UsersFailed)"
+Write-Host "Group Assignments:    $($Stats.GroupAssignments)"
+Write-Host "Group Assign Fail:    $($Stats.GroupAssignmentFail)"
+Write-Host ""
+
+Write-Host "Log file:"
+Write-Host $LogPath -ForegroundColor Cyan
+
+Write-Host ""
+
+if ($Stats.UsersFailed -eq 0) {
+
+    Write-Host "============================================================"
+    Write-Host " PROVISIONING COMPLETED SUCCESSFULLY"
+    Write-Host "============================================================" `
+        -ForegroundColor Green
+}
+else {
+
+    Write-Host "============================================================"
+    Write-Host " PROVISIONING COMPLETED WITH ERRORS"
+    Write-Host "============================================================" `
+        -ForegroundColor Yellow
+}
+
+Write-Host ""
+
+Stop-Transcript
