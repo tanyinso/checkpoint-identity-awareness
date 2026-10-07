@@ -1,4 +1,4 @@
-$ParentOU = "OU=dobre,DC=dobre,DC=local"
+$ParentOU = "OU=DOBRE,DC=dobre,DC=local"
 $DC = "DC1.dobre.local"
 
 Move-ADObject `
