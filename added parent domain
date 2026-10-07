@@ -1,5 +1,5 @@
-$ParentOU = "OU=DOBRE,DC=dobre,DC=local"
 $DC = "DC1.dobre.local"
+$ParentOU = "OU=DOBRE,DC=dobre,DC=local"
 
 Move-ADObject `
     -Identity "OU=_ADMIN,DC=dobre,DC=local" `
